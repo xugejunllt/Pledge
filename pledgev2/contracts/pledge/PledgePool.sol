@@ -46,17 +46,17 @@ contract PledgePool is ReentrancyGuard, SafeTransfer, multiSignatureClient{
         uint256 lendSupply;         // 当前实际存款的借款
         uint256 borrowSupply;       // 当前实际存款的借款
         uint256 martgageRate;       // 池的抵押率，单位是1e8 (1e8)
-        address lendToken;          // 借款方代币地址 (比如 BUSD..)
+        address lendToken;          // 出借方代币地址 (比如 BUSD..)
         address borrowToken;        // 借款方代币地址 (比如 BTC..)
         PoolState state;            // 状态 'MATCH, EXECUTION, FINISH, LIQUIDATION, UNDONE'
-        IDebtToken spCoin;          // sp_token的erc20地址 (比如 spBUSD_1..)
-        IDebtToken jpCoin;          // jp_token的erc20地址 (比如 jpBTC_1..)
-        uint256 autoLiquidateThreshold; // 自动清算阈值 (触发清算阈值)
+        IDebtToken spCoin;          // sp_token的erc20地址 (比如 spBUSD_1..) 借款凭证
+        IDebtToken jpCoin;          // jp_token的erc20地址 (比如 jpBTC_1..) 贷款凭证
+        uint256 autoLiquidateThreshold; // 自动清算阈值 (触发清算阈值)，当抵押物价值低于此阈值时触发清算
     }
     // total base pool.
     PoolBaseInfo[] public poolBaseInfo;
 
-       // 每个池的数据信息
+       // 每个池的数据信息，跟踪借贷池在不同生命周期的状态和金额
     struct PoolDataInfo{
         uint256 settleAmountLend;       // 结算时的实际出借金额
         uint256 settleAmountBorrow;     // 结算时的实际借款金额
@@ -67,26 +67,30 @@ contract PledgePool is ReentrancyGuard, SafeTransfer, multiSignatureClient{
     }
     // total data pool
     PoolDataInfo[] public poolDataInfo;
+    //PoolBaseInfo 存储借贷池的配置和当前状态
+    //PoolDataInfo 记录借贷池在不同阶段的实际资金数据
 
-       // 借款用户信息
+       // 借款用户信息,通常处理抵押物资产
     struct BorrowInfo {
-        uint256 stakeAmount;           // 当前借款的质押金额
-        uint256 refundAmount;          // 多余的退款金额
-        bool hasNoRefund;              // 默认为false，false = 未退款，true = 已退款
-        bool hasNoClaim;               // 默认为false，false = 未认领，true = 已认领
+        uint256 stakeAmount;           // 质押抵押物金额
+        uint256 refundAmount;          // 超额质押退款
+        bool hasNoRefund;              // 默认为false，false = 未退款，true = 已退款,借款退款状态
+        bool hasNoClaim;               // 默认为false，false = 未认领，true = 已认领,认领状态
     }
     // Info of each user that stakes tokens.  {user.address : {pool.index : user.borrowInfo}}
+    //用户地址 (address) -> 借贷池索引 (uint256) -> 借款用户信息 (BorrowInfo)
     mapping (address => mapping (uint256 => BorrowInfo)) public userBorrowInfo;
 
-      // 借款用户信息
+      // 出借用户信息,通常处理稳定币等出借资产
     struct LendInfo {
-        uint256 stakeAmount;          // 当前借款的质押金额
-        uint256 refundAmount;         // 超额退款金额
-        bool hasNoRefund;             // 默认为false，false = 无退款，true = 已退款
-        bool hasNoClaim;              // 默认为false，false = 无索赔，true = 已索赔
+        uint256 stakeAmount;          // 出借金额
+        uint256 refundAmount;         // 超额出借退款
+        bool hasNoRefund;             // 默认为false，false = 无退款，true = 已退款,出借退款状态
+        bool hasNoClaim;              // 默认为false，false = 无索赔，true = 已索赔,索赔状态
     }
 
     // Info of each user that stakes tokens.  {user.address : {pool.index : user.lendInfo}}
+    //用户地址 (address) -> 借贷池索引 (uint256) -> 出借用户信息 (LendInfo)
     mapping (address => mapping (uint256 => LendInfo)) public userLendInfo;
 
         // 事件
@@ -98,6 +102,7 @@ contract PledgePool is ReentrancyGuard, SafeTransfer, multiSignatureClient{
     event ClaimLend(address indexed from, address indexed token, uint256 amount); 
      // 提取借出事件，from是提取者地址，token是提取的代币地址，amount是提取的数量，burnAmount是销毁的数量
     event WithdrawLend(address indexed from,address indexed token,uint256 amount,uint256 burnAmount);
+
     // 存款借入事件，from是借入者地址，token是借入的代币地址，amount是借入的数量，mintAmount是生成的数量
     event DepositBorrow(address indexed from,address indexed token,uint256 amount,uint256 mintAmount); 
      // 借入退款事件，from是退款者地址，token是退款的代币地址，refund是退款的数量
@@ -106,12 +111,14 @@ contract PledgePool is ReentrancyGuard, SafeTransfer, multiSignatureClient{
     event ClaimBorrow(address indexed from, address indexed token, uint256 amount); 
     // 提取借入事件，from是提取者地址，token是提取的代币地址，amount是提取的数量，burnAmount是销毁的数量
     event WithdrawBorrow(address indexed from,address indexed token,uint256 amount,uint256 burnAmount); 
+
     // 交换事件，fromCoin是交换前的币种地址，toCoin是交换后的币种地址，fromValue是交换前的数量，toValue是交换后的数量
     event Swap(address indexed fromCoin,address indexed toCoin,uint256 fromValue,uint256 toValue); 
     // 紧急借入提取事件，from是提取者地址，token是提取的代币地址，amount是提取的数量
     event EmergencyBorrowWithdrawal(address indexed from, address indexed token, uint256 amount); 
      // 紧急借出提取事件，from是提取者地址，token是提取的代币地址，amount是提取的数量
     event EmergencyLendWithdrawal(address indexed from, address indexed token, uint256 amount);
+
     // 状态改变事件，pid是项目id，beforeState是改变前的状态，afterState是改变后的状态
     event StateChange(uint256 indexed pid, uint256 indexed beforeState, uint256 indexed afterState); 
      // 设置费用事件，newLendFee是新的借出费用，newBorrowFee是新的借入费用
@@ -124,20 +131,20 @@ contract PledgePool is ReentrancyGuard, SafeTransfer, multiSignatureClient{
     event SetMinAmount(uint256 indexed oldMinAmount, uint256 indexed newMinAmount); 
 
     constructor(
-        address _oracle,
-        address _swapRouter,
-        address payable _feeAddress,
-        address _multiSignature
-    ) multiSignatureClient(_multiSignature) public {
+        address _oracle, //预言机合约地址，用于获取价格数据
+        address _swapRouter, //代币交换路由合约地址
+        address payable _feeAddress, //可支付地址，用于接收手续费
+        address _multiSignature //多重签名合约地址
+    ) multiSignatureClient(_multiSignature) public { //通过multiSignatureClient(_multiSignature)调用父合约的构造函数，初始化多重签名功能
         require(_oracle != address(0), "Is zero address");
         require(_swapRouter != address(0), "Is zero address");
         require(_feeAddress != address(0), "Is zero address");
 
-        oracle = IBscPledgeOracle(_oracle);
-        swapRouter = _swapRouter;
-        feeAddress = _feeAddress;
-        lendFee = 0;
-        borrowFee = 0;
+        oracle = IBscPledgeOracle(_oracle); //转换为IBscPledgeOracle接口类型
+        swapRouter = _swapRouter; //设置代币交换路由合约地址
+        feeAddress = _feeAddress; //设置可支付地址，用于接收手续费
+        lendFee = 0; //初始化为0，表示初始阶段不收取借出手续费
+        borrowFee = 0; //初始化为0，表示初始阶段不收取借入手续费
     }
 
     /**
@@ -236,57 +243,100 @@ contract PledgePool is ReentrancyGuard, SafeTransfer, multiSignatureClient{
         return uint256(pool.state);
     }
 
-       /**
+    /**
      * @dev 存款人执行存款操作
      * @notice 池状态必须为MATCH
      * @param _pid 是池索引
      * @param _stakeAmount 是用户的质押金额
      */
-    function depositLend(uint256 _pid, uint256 _stakeAmount) external payable nonReentrant notPause timeBefore(_pid) stateMatch(_pid){
-        // 时间和状态的限制
+    function depositLend(uint256 _pid, uint256 _stakeAmount) 
+        external 
+        payable 
+        nonReentrant 
+        notPause 
+        timeBefore(_pid) 
+        stateMatch(_pid) 
+    {
+        // 获取池和用户信息
         PoolBaseInfo storage pool = poolBaseInfo[_pid];
         LendInfo storage lendInfo = userLendInfo[msg.sender][_pid];
-        // 边界条件
-        require(_stakeAmount <= (pool.maxSupply).sub(pool.lendSupply), "depositLend: 数量超过限制");
-        uint256 amount = getPayableAmount(pool.lendToken,_stakeAmount);
+        
+        // 边界条件检查
+        require(
+            _stakeAmount <= (pool.maxSupply).sub(pool.lendSupply), 
+            "depositLend: 数量超过限制"
+        );
+        
+        // 获取实际应付金额并检查最小金额限制
+        uint256 amount = getPayableAmount(pool.lendToken, _stakeAmount);
         require(amount > minAmount, "depositLend: 少于最小金额");
-        // 保存借款用户信息
-        lendInfo.hasNoClaim = false;
-        lendInfo.hasNoRefund = false;
-        if (pool.lendToken == address(0)){
+        
+        // 更新用户状态
+        lendInfo.hasNoClaim = false;   // 标记用户有待认领
+        lendInfo.hasNoRefund = false;  // 标记用户有待退款
+        
+        // 处理存款
+        if (pool.lendToken == address(0)) {
+            // ETH存款处理
             lendInfo.stakeAmount = lendInfo.stakeAmount.add(msg.value);
             pool.lendSupply = pool.lendSupply.add(msg.value);
         } else {
+            // ERC20代币存款处理
             lendInfo.stakeAmount = lendInfo.stakeAmount.add(_stakeAmount);
             pool.lendSupply = pool.lendSupply.add(_stakeAmount);
         }
+        
+        // 触发事件
         emit DepositLend(msg.sender, pool.lendToken, _stakeAmount, amount);
     }
+
 
        /**
      * @dev 退还过量存款给存款人
      * @notice 池状态不等于匹配和未完成
      * @param _pid 是池索引
      */
-    function refundLend(uint256 _pid) external nonReentrant notPause timeAfter(_pid) stateNotMatchUndone(_pid){
-        PoolBaseInfo storage pool = poolBaseInfo[_pid]; // 获取池的基本信息
-        PoolDataInfo storage data = poolDataInfo[_pid]; // 获取池的数据信息
-        LendInfo storage lendInfo = userLendInfo[msg.sender][_pid]; // 获取用户的出借信息
-        // 限制金额
-        require(lendInfo.stakeAmount > 0, "refundLend: not pledged"); // 需要用户已经质押了一定数量
-        require(pool.lendSupply.sub(data.settleAmountLend) > 0, "refundLend: not refund"); // 需要池中还有未退还的金额
-        require(!lendInfo.hasNoRefund, "refundLend: repeat refund"); // 需要用户没有重复退款
-        // 用户份额 = 当前质押金额 / 总金额
+    /**
+     * @dev 退还过量存款给存款人
+     * @notice 池状态不等于匹配和未完成
+     * @param _pid 是池索引
+     */
+    function refundLend(uint256 _pid) 
+        external 
+        nonReentrant 
+        notPause 
+        timeAfter(_pid) 
+        stateNotMatchUndone(_pid) 
+    {
+        // 获取池和用户信息
+        PoolBaseInfo storage pool = poolBaseInfo[_pid];
+        PoolDataInfo storage data = poolDataInfo[_pid];
+        LendInfo storage lendInfo = userLendInfo[msg.sender][_pid];
+        
+        // 边界条件检查
+        require(lendInfo.stakeAmount > 0, "refundLend: not pledged");
+        require(pool.lendSupply.sub(data.settleAmountLend) > 0, "refundLend: not refund");
+        require(!lendInfo.hasNoRefund, "refundLend: repeat refund");
+        
+        // 计算退款金额
+        // 计算用户份额(放大1e18倍避免精度损失)
         uint256 userShare = lendInfo.stakeAmount.mul(calDecimal).div(pool.lendSupply);
-        // refundAmount = 总退款金额 * 用户份额
-        uint256 refundAmount = (pool.lendSupply.sub(data.settleAmountLend)).mul(userShare).div(calDecimal);
-        // 退款操作
-        _redeem(msg.sender,pool.lendToken,refundAmount);
-        // 更新用户信息
+        // 计算实际退款金额
+        uint256 refundAmount = (pool.lendSupply.sub(data.settleAmountLend))
+                                .mul(userShare)
+                                .div(calDecimal);
+        
+        // 执行退款
+        _redeem(msg.sender, pool.lendToken, refundAmount);
+        
+        // 更新用户状态
         lendInfo.hasNoRefund = true;
         lendInfo.refundAmount = lendInfo.refundAmount.add(refundAmount);
-        emit RefundLend(msg.sender, pool.lendToken, refundAmount); // 触发退款事件
+        
+        // 触发事件
+        emit RefundLend(msg.sender, pool.lendToken, refundAmount);
     }
+
 
      /**
      * @dev 存款人接收 sp_toke,主要功能是让存款人领取 sp_token
