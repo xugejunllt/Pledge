@@ -1,29 +1,30 @@
 
-const BN = web3.utils.BN;
+const { ethers, network } = require("hardhat");
+
 async function latestBlock () {
-  const block = await web3.eth.getBlock('latest');
-  return new BN(block.number);
+  const block = await ethers.provider.getBlock('latest');
+  return block.number;
 }
 
 async function latestBlockNum () {
-  const block = await web3.eth.getBlock('latest');
-  return (new BN(block.number)).toNumber();
+  const block = await ethers.provider.getBlock('latest');
+  return block.number;
 }
 
 
 async function showBlock () {
-    const block = await web3.eth.getBlock('latest');
-    console.log("Block number: " + new BN(block.number).toString());
+    const block = await ethers.provider.getBlock('latest');
+    console.log("Block number: " + block.number);
   }
 
-async function showBlock (msg) {
-    const block = await web3.eth.getBlock('latest');
-    console.log(msg + " at block number: " + new BN(block.number).toString());
+async function showBlockMsg (msg) {
+    const block = await ethers.provider.getBlock('latest');
+    console.log(msg + " at block number: " + block.number);
   }
 
 async function stopAutoMine() {
     //stop auto mine or it will mess the block number
-    network.provider.send("evm_setIntervalMining", [600000])
+    await network.provider.send("evm_setIntervalMining", [600000])
     // await network.provider.send("evm_setAutomine", [false])
 }
 
@@ -37,30 +38,26 @@ function advanceBlock () {
 async function advanceBlockTo (target) {
     // stop interval mint,set to 600s
   await stopAutoMine()
-  if (!BN.isBN(target)) {
-    target = new BN(target);
-  }
+  target = Number(target);
 
   const currentBlock = (await latestBlock());
   const start = Date.now();
   let notified;
-  if (target.lt(currentBlock)) throw Error(`Target block #(${target}) is lower than current block #(${currentBlock})`);
-  while ((await latestBlock()).lt(target)) {
+  if (target < currentBlock) throw Error(`Target block #(${target}) is lower than current block #(${currentBlock})`);
+  while ((await latestBlock()) < target) {
     if (!notified && Date.now() - start >= 5000) {
       notified = true;
-      console.log(`\
-${colors.white.bgBlack('@openzeppelin/test-helpers')} ${colors.black.bgYellow('WARN')} advanceBlockTo: Advancing too ` +
-      'many blocks is causing this test to be slow.');
+      console.log('advanceBlockTo: Advancing too many blocks may be slow.');
     }
     await advanceBlock();
   }
-  await showBlock('arrive')
+  await showBlockMsg('arrive')
 }
 
 // Returns the time of the last mined block in seconds
 async function latest () {
-    const block = await web3.eth.getBlock('latest');
-    return new BN(block.timestamp);
+    const block = await ethers.provider.getBlock('latest');
+    return block.timestamp;
   }
 
 async function increase(seconds) {

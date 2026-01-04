@@ -1,4 +1,4 @@
-const BN = web3.utils.BN;
+const { ethers } = require("hardhat");
 const zeroAddress = "0x0000000000000000000000000000000000000000"
 
 async function initFactory(minter) {
@@ -6,6 +6,7 @@ async function initFactory(minter) {
     const Factory = await ethers.getContractFactory("UniswapV2Factory");
     // set feeTo setter to minter
     factory = await Factory.deploy(minter.address)
+    await factory.waitForDeployment();
     return factory;
 }
 
@@ -14,13 +15,15 @@ async function initWETH() {
     // @Notice Mock WETH, will be replaced in formal deploy
     const WETH = await ethers.getContractFactory("WETH9");
     weth = await WETH.deploy()
+    await weth.waitForDeployment();
     return weth;
 }
 
 
 async function initRouter(factory, weth) {
     const Rounter = await ethers.getContractFactory("UniswapV2Router02");
-    router = await Rounter.deploy(factory.address, weth.address)
+    router = await Rounter.deploy(factory.target, weth.target)
+    await router.waitForDeployment();
     return router
 }
 
@@ -28,12 +31,14 @@ async function initRouter(factory, weth) {
 async function initBusd(){
     const Busd = await  ethers.getContractFactory("BEP20Token");
     busd = await Busd.deploy();
+    await busd.waitForDeployment();
     return busd
 }
 
 async function initBtc() {
     const Btc= await ethers.getContractFactory("BtcToken");
     btc = await Btc.deploy();
+    await btc.waitForDeployment();
     return btc
 }
 

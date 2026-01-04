@@ -8,7 +8,9 @@ const getMethods = (obj) => {
   }
 // show({x}), must have {}, and x is a singel variable
 const show = (x) => {
-    console.log(Object.keys(x)[0] + ": " + Object.values(x)[0].toString())
+    const key = Object.keys(x)[0];
+    const val = Object.values(x)[0];
+    console.log(`${key}: ${val?.toString() ?? 'undefined'}`);
 }
 const getVarName = varObj => {
     Object.keys(varObj)[0]

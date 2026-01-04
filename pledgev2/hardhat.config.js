@@ -1,9 +1,14 @@
 require("@nomicfoundation/hardhat-ignition");
-require("@nomiclabs/hardhat-ethers");
+require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-chai-matchers");
 require("dotenv").config();
+
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
+  paths: {
+    tests: "./tests",
+  },
   networks: {
     bscTestnet: {
       url: "https://data-seed-prebsc-1-s1.binance.org:8545",
@@ -15,11 +20,16 @@ module.exports = {
     },
   },
   solidity: {
-    optimizer: {
-      enabled: false,
-      runs: 50,
-    },
     compilers: [
+      {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200
+          }
+        }
+      },
       {
         version: "0.4.18",
         settings: {

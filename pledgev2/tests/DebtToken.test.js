@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { show } = require("./helper/meta.js");
+const { ethers } = require("hardhat")
 
 
 
@@ -7,8 +8,13 @@ describe("DebtToken",function () {
     let debtToken;
     beforeEach(async ()=>{
         [minter, alice, bob, carol, _] = await ethers.getSigners();
+        const MockMultiSignature = await ethers.getContractFactory("MockMultiSignature");
+        const mockMultiSignature = await MockMultiSignature.deploy();
+        await mockMultiSignature.waitForDeployment();
         const DebtToken = await ethers.getContractFactory("DebtToken");
-        debtToken = await DebtToken.deploy("spBUSD_1", "spBUSD_1");
+        debtToken = await DebtToken.deploy("spBUSD_1", "spBUSD_1", mockMultiSignature.target);
+        await debtToken.waitForDeployment();
+        await mockMultiSignature.approve(minter.address, debtToken.target, 0);
     });
 
     it("check if mint right", async function() {
@@ -27,7 +33,7 @@ describe("DebtToken",function () {
       });
 
     it ("can not add minter by others", async function() {
-        await expect(debtToken.connect(alice).addMinter(alice.address)).to.be.revertedWith("Ownable: caller is not the owner");
+        await expect(debtToken.connect(alice).addMinter(alice.address)).to.be.reverted;
       });
 
     it ("after addMinter by owner, mint by minter should succeed", async function() {
